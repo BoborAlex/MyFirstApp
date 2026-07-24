@@ -35,4 +35,5 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     // Добавляем эту строчку:
     implementation("com.google.android.gms:play-services-location:21.1.0")
+    implementation("com.squareup.picasso:picasso:2.8")
 }
