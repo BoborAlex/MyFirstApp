@@ -17,9 +17,17 @@
         android:id="@+id/tvLocationResult"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="24dp"
+        android:layout_marginTop="20dp"
         android:gravity="center"
         android:text="Нажмите кнопку, чтобы узнать адрес"
         android:textSize="16sp" />
+
+    <ImageView
+        android:id="@+id/ivLocationImage"
+        android:layout_width="match_parent"
+        android:layout_height="250dp"
+        android:layout_marginTop="20dp"
+        android:scaleType="centerCrop"
+        android:contentDescription="Фото места" />
 
 </LinearLayout>
