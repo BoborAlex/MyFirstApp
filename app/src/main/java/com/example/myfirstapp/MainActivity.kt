@@ -2,15 +2,14 @@ package com.example.myfirstapp
 
 import android.location.Address
 import android.location.Geocoder
-import android.media.ExifInterface
 import android.os.Bundle
+import android.provider.MediaStore
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.squareup.picasso.Picasso
-import java.io.File
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
@@ -23,23 +22,26 @@ class MainActivity : AppCompatActivity() {
             Picasso.get().load(uri).into(ivLocationImage)
 
             try {
-                val tempFile = File(cacheDir, "temp_photo.jpg")
-                contentResolver.openInputStream(uri)?.use { input ->
-                    tempFile.outputStream().use { output ->
-                        input.copyTo(output)
+                var latitude = 0.0
+                var longitude = 0.0
+
+                // Запрашиваем координаты напрямую из системной базы MediaStore по Uri выбранного фото
+                val projection = arrayOf(
+                    MediaStore.Images.Media.LATITUDE,
+                    MediaStore.Images.Media.LONGITUDE
+                )
+
+                contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                    val latCol = cursor.getColumnIndex(MediaStore.Images.Media.LATITUDE)
+                    val lonCol = cursor.getColumnIndex(MediaStore.Images.Media.LONGITUDE)
+
+                    if (cursor.moveToFirst() && latCol != -1 && lonCol != -1) {
+                        latitude = cursor.getDouble(latCol)
+                        longitude = cursor.getDouble(lonCol)
                     }
                 }
 
-                val exif = ExifInterface(tempFile.absolutePath)
-                
-                // Безопасно извлекаем координаты через встроенный метод конвертации ExifInterface
-                val latLong = FloatArray(2)
-                val hasValues = exif.getLatLong(latLong)
-
-                if (hasValues && (latLong[0] != 0.0f || latLong[1] != 0.0f)) {
-                    val latitude = latLong[0].toDouble()
-                    val longitude = latLong[1].toDouble()
-
+                if (latitude != 0.0 || longitude != 0.0) {
                     val geocoder = Geocoder(this, Locale.getDefault())
                     @Suppress("DEPRECATION")
                     val addresses = geocoder.getFromLocation(latitude, longitude, 1)
@@ -47,18 +49,13 @@ class MainActivity : AppCompatActivity() {
                     if (!addresses.isNullOrEmpty()) {
                         val address: Address = addresses[0]
                         val fullAddress = address.getAddressLine(0) ?: "Адрес не определен"
-                        tvLocationResult.text = "УСПЕХ!\nКоординаты: $latitude, $longitude\nАдрес: $fullAddress"
+                        tvLocationResult.text = "УСПЕХ из MediaStore!\nКоординаты: $latitude, $longitude\nАдрес: $fullAddress"
                     } else {
-                        tvLocationResult.text = "Координаты найдены: $latitude, $longitude, но адрес не определился."
+                        tvLocationResult.text = "Координаты из MediaStore: $latitude, $longitude, но адрес не определился."
                     }
                 } else {
-                    // Запасной вариант: читаем сырые теги, если getLatLong вернул нули
-                    val latStr = exif.getAttribute(ExifInterface.TAG_GPS_LATITUDE)
-                    val lonStr = exif.getAttribute(ExifInterface.TAG_GPS_LONGITUDE)
-                    tvLocationResult.text = "GPS теги в файле пусты или равны нулю.\nСырые теги: Lat=$latStr, Lon=$lonStr"
+                    tvLocationResult.text = "В системной базе MediaStore для этого фото нет координат (нуки)."
                 }
-
-                tempFile.delete()
 
             } catch (e: Exception) {
                 tvLocationResult.text = "Ошибка: ${e.localizedMessage}"
