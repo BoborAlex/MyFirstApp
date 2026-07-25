@@ -1,7 +1,5 @@
 package com.example.myfirstapp
 
-import android.location.Address
-import android.location.Geocoder
 import android.media.ExifInterface
 import android.os.Bundle
 import android.widget.Button
@@ -11,7 +9,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.squareup.picasso.Picasso
 import java.io.File
-import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
@@ -23,7 +20,6 @@ class MainActivity : AppCompatActivity() {
             Picasso.get().load(uri).into(ivLocationImage)
 
             try {
-                // Копируем файл во временный кэш приложения, чтобы избежать ограничений потока
                 val tempFile = File(cacheDir, "temp_photo.jpg")
                 contentResolver.openInputStream(uri)?.use { input ->
                     tempFile.outputStream().use { output ->
@@ -31,34 +27,29 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                // Читаем EXIF из нашего собственного временного файла
                 val exif = ExifInterface(tempFile.absolutePath)
-                val latLong = FloatArray(2)
+                
+                // Проверяем основные теги координат напрямую
+                val lat = exif.getAttribute(ExifInterface.TAG_GPS_LATITUDE)
+                val latRef = exif.getAttribute(ExifInterface.TAG_GPS_LATITUDE_REF)
+                val lon = exif.getAttribute(ExifInterface.TAG_GPS_LONGITUDE)
+                val lonRef = exif.getAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF)
 
-                if (exif.getLatLong(latLong)) {
-                    val latitude = latLong[0].toDouble()
-                    val longitude = latLong[1].toDouble()
+                val latLongArray = FloatArray(2)
+                val hasLatLong = exif.getLatLong(latLongArray)
 
-                    val geocoder = Geocoder(this, Locale.getDefault())
-                    @Suppress("DEPRECATION")
-                    val addresses = geocoder.getFromLocation(latitude, longitude, 1)
+                tvLocationResult.text = """
+                    Сырые данные EXIF:
+                    Lat: $lat ($latRef)
+                    Lon: $lon ($lonRef)
+                    Метод getLatLong: $hasLatLong
+                    Значения: ${latLongArray[0]}, ${latLongArray[1]}
+                """.trimIndent()
 
-                    if (!addresses.isNullOrEmpty()) {
-                        val address: Address = addresses[0]
-                        val fullAddress = address.getAddressLine(0) ?: "Адрес не определен"
-                        tvLocationResult.text = "УСПЕХ!\nКоординаты: $latitude, $longitude\nАдрес: $fullAddress"
-                    } else {
-                        tvLocationResult.text = "Координаты найдены: $latitude, $longitude, но адрес не определился."
-                    }
-                } else {
-                    tvLocationResult.text = "В выбранном фото нет GPS-меток (EXIF пуст)."
-                }
-
-                // Удаляем временный файл
                 tempFile.delete()
 
             } catch (e: Exception) {
-                tvLocationResult.text = "Ошибка чтения: ${e.localizedMessage}"
+                tvLocationResult.text = "Ошибка: ${e.localizedMessage}"
             }
         }
     }
