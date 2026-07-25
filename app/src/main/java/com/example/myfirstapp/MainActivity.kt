@@ -3,7 +3,6 @@ package com.example.myfirstapp
 import android.Manifest
 import android.content.pm.PackageManager
 import android.location.Location
-import android.net.Uri
 import android.os.Bundle
 import android.widget.Button
 import android.widget.ImageView
@@ -12,8 +11,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
@@ -22,7 +20,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
 
@@ -41,20 +38,9 @@ class MainActivity : AppCompatActivity() {
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
-        startBackgroundIndexer()
-
         btnGetLocation.setOnClickListener {
             checkPermissionsAndRun()
         }
-    }
-
-    private fun startBackgroundIndexer() {
-        val request = PeriodicWorkRequestBuilder<PhotoIndexerWorker>(4, TimeUnit.HOURS).build()
-        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            "PhotoIndexerWork",
-            ExistingPeriodicWorkPolicy.KEEP,
-            request
-        )
     }
 
     private fun checkPermissionsAndRun() {
@@ -78,7 +64,24 @@ class MainActivity : AppCompatActivity() {
                 PERMISSION_REQUEST_CODE
             )
         } else {
-            fetchLocationAndFindPhotos()
+            // Принудительно запускаем индексацию прямо сейчас, а затем ищем фото
+            tvLocationResult.text = "Сканирую галерею на наличие геотегов..."
+            runImmediateIndexingAndFind()
+        }
+    }
+
+    private fun runImmediateIndexingAndFind() {
+        // Запускаем разовую фоновую задачу прямо сейчас
+        val workRequest = OneTimeWorkRequestBuilder<PhotoIndexerWorker>().build()
+        val workManager = WorkManager.getInstance(this)
+        
+        workManager.enqueue(workRequest)
+
+        // Слушаем статус выполнения задачи, и как только она завершится — ищем фото
+        workManager.getWorkInfoByIdLiveData(workRequest.id).observe(this) { workInfo ->
+            if (workInfo != null && workInfo.state.isFinished) {
+                fetchLocationAndFindPhotos()
+            }
         }
     }
 
@@ -86,7 +89,6 @@ class MainActivity : AppCompatActivity() {
         try {
             fusedLocationClient.lastLocation.addOnSuccessListener { location ->
                 if (location != null) {
-                    // Ищем фото в радиусе 10 км с сортировкой по близости
                     findClosestPhotoInRange(location.latitude, location.longitude, 10.0)
                 } else {
                     tvLocationResult.text = "Не удалось определить местоположение."
@@ -101,14 +103,12 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             val dao = AppDatabase.getDatabase(applicationContext).photoDao()
 
-            // 1 градус ~ 111 км. Считаем дельту для радиуса (например, 10 км ~ 0.1 градуса)
             val delta = radiusKm / 111.0
             val photos = dao.getPhotosInBox(
                 currentLat - delta, currentLat + delta,
                 currentLon - delta, currentLon + delta
             )
 
-            // Считаем расстояние для каждой найденной фотографии
             val photosWithDistance = photos.mapNotNull { photo ->
                 val results = FloatArray(1)
                 Location.distanceBetween(currentLat, currentLon, photo.latitude, photo.longitude, results)
@@ -119,7 +119,7 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     null
                 }
-            }.sortedBy { it.second } // Сортируем по возрастанию расстояния (от самых близких к дальним)
+            }.sortedBy { it.second }
 
             withContext(Dispatchers.Main) {
                 if (photosWithDistance.isNotEmpty()) {
@@ -133,7 +133,6 @@ class MainActivity : AppCompatActivity() {
 
                     tvLocationResult.text = "Ближайшее фото найдено!\nРасстояние: $distanceText"
 
-                    // Выводим саму найденную фотографию из памяти телефона в ImageView
                     val imageFile = File(closestPhoto.filePath)
                     if (imageFile.exists()) {
                         Picasso.get()
@@ -143,7 +142,7 @@ class MainActivity : AppCompatActivity() {
                             .into(ivLocationImage)
                     }
                 } else {
-                    tvLocationResult.text = "В радиусе ${radiusKm.toInt()} км нет фото с геотегами.\n(Убедитесь, что на камере включено сохранение геопозиции)"
+                    tvLocationResult.text = "В базе нет фото в радиусе ${radiusKm.toInt()} км.\n(Проверьте, разрешен ли гео-тегинг в камере телефона)"
                 }
             }
         }
@@ -152,7 +151,8 @@ class MainActivity : AppCompatActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_CODE && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-            fetchLocationAndFindPhotos()
+            tvLocationResult.text = "Сканирую галерею на наличие геотегов..."
+            runImmediateIndexingAndFind()
         } else {
             tvLocationResult.text = "Требуются все разрешения для работы локального радара!"
         }
