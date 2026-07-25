@@ -1,19 +1,15 @@
 package com.example.myfirstapp
 
-import android.database.Cursor
 import android.location.Address
 import android.location.Geocoder
 import android.media.ExifInterface
-import android.net.Uri
 import android.os.Bundle
-import android.provider.MediaStore
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.squareup.picasso.Picasso
-import java.io.File
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
@@ -25,13 +21,10 @@ class MainActivity : AppCompatActivity() {
         if (uri != null) {
             Picasso.get().load(uri).into(ivLocationImage)
 
-            // Получаем реальный путь к файлу на диске по Uri
-            val filePath = getRealPathFromURI(uri)
-
-            if (filePath != null) {
-                try {
-                    // Читаем EXIF напрямую по пути к файлу
-                    val exif = ExifInterface(filePath)
+            try {
+                // Читаем EXIF напрямую из системного потока Uri (без использования путей к файлам)
+                contentResolver.openInputStream(uri)?.use { inputStream ->
+                    val exif = ExifInterface(inputStream)
                     val latLong = FloatArray(2)
 
                     if (exif.getLatLong(latLong)) {
@@ -50,13 +43,11 @@ class MainActivity : AppCompatActivity() {
                             tvLocationResult.text = "Координаты найдены: $latitude, $longitude, но адрес не определился."
                         }
                     } else {
-                        tvLocationResult.text = "EXIF-данные прочитаны, но тегов GPS нет (нулевые координаты)."
+                        tvLocationResult.text = "В выбранном фото нет GPS-меток (EXIF пуст)."
                     }
-                } catch (e: Exception) {
-                    tvLocationResult.text = "Ошибка чтения EXIF: ${e.message}"
                 }
-            } else {
-                tvLocationResult.text = "Не удалось получить путь к файлу."
+            } catch (e: Exception) {
+                tvLocationResult.text = "Ошибка чтения: ${e.localizedMessage}"
             }
         }
     }
@@ -72,18 +63,5 @@ class MainActivity : AppCompatActivity() {
         btnTestPhoto.setOnClickListener {
             pickPhotoLauncher.launch("image/*")
         }
-    }
-
-    // Вспомогательная функция для получения пути файла из Uri
-    private fun getRealPathFromURI(uri: Uri): String? {
-        var path: String? = null
-        val projection = arrayOf(MediaStore.Images.Media.DATA)
-        contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
-            val columnIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA)
-            if (cursor.moveToFirst()) {
-                path = cursor.getString(columnIndex)
-            }
-        }
-        return path
     }
 }
