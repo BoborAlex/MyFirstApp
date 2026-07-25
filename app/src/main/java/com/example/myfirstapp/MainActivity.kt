@@ -14,15 +14,15 @@ import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var tvLocationResult: TextView
-    private lateinit var ivLocationImage: ImageView
+    private var tvLocationResult: TextView? = null
+    private var ivLocationImage: ImageView? = null
 
     private val pickPhotoLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
             try {
-                Picasso.get().load(uri).into(ivLocationImage)
+                ivLocationImage?.let { Picasso.get().load(uri).into(it) }
             } catch (e: Exception) {
-                // Игнорируем ошибки пикассо, если они есть
+                // Игнорируем ошибки загрузки картинки
             }
 
             try {
@@ -50,12 +50,12 @@ class MainActivity : AppCompatActivity() {
                             fullAddress = addresses[0].getAddressLine(0) ?: "Адрес не определен"
                         }
                     } catch (e: Exception) {
-                        fullAddress = "Ошибка геокодера: ${e.localizedMessage}"
+                        fullAddress = "Координаты: $latitude, $longitude (ошибка геокодера)"
                     }
 
-                    tvLocationResult.text = "УСПЕХ!\nКоординаты: $latitude, $longitude\nАдрес: $fullAddress"
+                    tvLocationResult?.text = "УСПЕХ!\nКоординаты: $latitude, $longitude\nАдрес: $fullAddress"
                 } else {
-                    tvLocationResult.text = "В этом файле EXIF-координаты отсутствуют или занулены системой."
+                    tvLocationResult?.text = "В этом файле EXIF-координаты отсутствуют или занулены системой."
                 }
 
                 if (tempFile.exists()) {
@@ -63,7 +63,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
             } catch (e: Exception) {
-                tvLocationResult.text = "Ошибка обработки: ${e.localizedMessage}"
+                tvLocationResult?.text = "Ошибка обработки: ${e.localizedMessage}"
             }
         }
     }
@@ -72,20 +72,16 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        try {
-            tvLocationResult = findViewById(R.id.tvLocationResult)
-            ivLocationImage = findViewById(R.id.ivLocationImage)
-            val btnTestPhoto = findViewById<Button>(R.id.btnTestPhoto)
+        tvLocationResult = findViewById(R.id.tvLocationResult)
+        ivLocationImage = findViewById(R.id.ivLocationImage)
+        val btnTestPhoto = findViewById<Button>(R.id.btnTestPhoto)
 
-            btnTestPhoto.setOnClickListener {
-                try {
-                    pickPhotoLauncher.launch("image/*")
-                } catch (e: Exception) {
-                    tvLocationResult.text = "Ошибка запуска галереи: ${e.localizedMessage}"
-                }
+        btnTestPhoto.setOnClickListener {
+            try {
+                pickPhotoLauncher.launch("image/*")
+            } catch (e: Exception) {
+                tvLocationResult?.text = "Ошибка запуска галереи: ${e.localizedMessage}"
             }
-        } catch (e: Exception) {
-            // Защита от падений в onCreate
         }
     }
 }
