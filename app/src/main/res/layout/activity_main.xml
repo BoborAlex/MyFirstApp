@@ -2,39 +2,29 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:gravity="center"
     android:orientation="vertical"
-    android:padding="24dp">
+    android:gravity="center"
+    android:padding="16dp">
 
     <Button
-        android:id="@+id/btnGetLocation"
+        android:id="@+id/btnTestPhoto"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Иде я нахожуся?"
-        android:textSize="18sp" />
-    
-    <Button
-    android:id="@+id/btnTestPhoto"
-    android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
-    android:text="Тест: выбрать фото"
-    android:layout_marginTop="16px" />
+        android:text="ТЕСТ: ВЫБРАТЬ ФОТО"
+        android:layout_marginBottom="16dp"/>
 
     <TextView
         android:id="@+id/tvLocationResult"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="20dp"
+        android:text="Результат появится здесь"
         android:gravity="center"
-        android:text="Нажмите кнопку, чтобы узнать адрес"
-        android:textSize="16sp" />
+        android:layout_marginBottom="16dp"/>
 
     <ImageView
         android:id="@+id/ivLocationImage"
-        android:layout_width="match_parent"
+        android:layout_width="250dp"
         android:layout_height="250dp"
-        android:layout_marginTop="20dp"
-        android:scaleType="centerCrop"
-        android:contentDescription="Фото места" />
+        android:scaleType="centerCrop"/>
 
 </LinearLayout>
