@@ -1,16 +1,20 @@
 package com.example.myfirstapp
 
+import android.content.Intent
 import android.location.Address
 import android.location.Geocoder
 import android.net.Uri
 import android.os.Bundle
-import android.provider.MediaStore
+import android.os.Environment
+import android.provider.Settings
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.exifinterface.media.ExifInterface
 import com.squareup.picasso.Picasso
+import java.io.File
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
@@ -23,60 +27,39 @@ class MainActivity : AppCompatActivity() {
             Picasso.get().load(uri).into(ivLocationImage)
 
             try {
-                var latitude = 0.0
-                var longitude = 0.0
+                // Пытаемся вытащить реальный путь к файлу из URI
+                val filePath = getRealPathFromURI(uri)
+                
+                if (filePath != null) {
+                    val file = File(filePath)
+                    if (file.exists()) {
+                        // Читаем EXIF напрямую из файла на диске
+                        val exif = ExifInterface(file.absolutePath)
+                        val latLong = FloatArray(2)
+                        
+                        if (exif.getLatLong(latLong) && (latLong[0] != 0.0f || latLong[1] != 0.0f)) {
+                            val latitude = latLong[0].toDouble()
+                            val longitude = latLong[1].toDouble()
 
-                // Запрашиваем координаты из системной базы MediaStore для выбранного файла
-                val projection = arrayOf(
-                    MediaStore.Images.Media.LATITUDE,
-                    MediaStore.Images.Media.LONGITUDE
-                )
+                            val geocoder = Geocoder(this, Locale.getDefault())
+                            @Suppress("DEPRECATION")
+                            val addresses = geocoder.getFromLocation(latitude, longitude, 1)
 
-                contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
-                    val latCol = cursor.getColumnIndex(MediaStore.Images.Media.LATITUDE)
-                    val lonCol = cursor.getColumnIndex(MediaStore.Images.Media.LONGITUDE)
-
-                    if (cursor.moveToFirst() && latCol != -1 && lonCol != -1) {
-                        latitude = cursor.getDouble(latCol)
-                        longitude = cursor.getDouble(lonCol)
-                    }
-                }
-
-                // Если в MediaStore пусто, пробуем вытащить через альтернативные колонки или датасет
-                if (latitude == 0.0 && longitude == 0.0) {
-                    // Запасной вариант: запрашиваем вообще все метаданные по этому Uri
-                    val metadataProjection = arrayOf("_data", "latitude", "longitude")
-                    contentResolver.query(uri, metadataProjection, null, null, null)?.use { cursor ->
-                        if (cursor.moveToFirst()) {
-                            for (i in 0 until cursor.columnCount) {
-                                val colName = cursor.getColumnName(i)
-                                if (colName.contains("lat", true)) {
-                                    latitude = cursor.getDouble(i)
-                                }
-                                if (colName.contains("lon", true)) {
-                                    longitude = cursor.getDouble(i)
-                                }
+                            if (!addresses.isNullOrEmpty()) {
+                                val address: Address = addresses[0]
+                                val fullAddress = address.getAddressLine(0) ?: "Адрес не определен"
+                                tvLocationResult.text = "УСПЕХ НАПРЯМУЮ!\nКоординаты: $latitude, $longitude\nАдрес: $fullAddress"
+                            } else {
+                                tvLocationResult.text = "Координаты найдены: $latitude, $longitude, но адрес не определился."
                             }
+                        } else {
+                            tvLocationResult.text = "Файл найден, но EXIF-теги GPS пусты или равны нулю."
                         }
-                    }
-                }
-
-                if (latitude != 0.0 || longitude != 0.0) {
-                    val geocoder = Geocoder(this, Locale.getDefault())
-                    @Suppress("DEPRECATION")
-                    val addresses = geocoder.getFromLocation(latitude, longitude, 1)
-
-                    if (!addresses.isNullOrEmpty()) {
-                        val address: Address = addresses[0]
-                        val fullAddress = address.getAddressLine(0) ?: "Адрес не определен"
-                        tvLocationResult.text = "УСПЕХ!\nКоординаты: $latitude, $longitude\nАдрес: $fullAddress"
                     } else {
-                        tvLocationResult.text = "Координаты найдены: $latitude, $longitude, но адрес не определился."
+                        tvLocationResult.text = "Файл по пути не найден."
                     }
                 } else {
-                    // Если система совсем скрыла координаты файла из соображений безопасности, 
-                    // выведем понятный статус
-                    tvLocationResult.text = "Система скрыла геоданные этого файла в MediaStore.\nНо мы можем привязать его вручную!"
+                    tvLocationResult.text = "Не удалось получить прямой путь к файлу из-за защиты Android."
                 }
 
             } catch (e: Exception) {
@@ -93,8 +76,26 @@ class MainActivity : AppCompatActivity() {
         ivLocationImage = findViewById(R.id.ivLocationImage)
         val btnTestPhoto = findViewById<Button>(R.id.btnTestPhoto)
 
+        // Проверяем и запрашиваем разрешение на доступ ко всем файлам для старых фото
+        if (!Environment.isExternalStorageManager()) {
+            val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+            startActivity(intent)
+        }
+
         btnTestPhoto.setOnClickListener {
             pickPhotoLauncher.launch("image/*")
         }
+    }
+
+    private fun getRealPathFromURI(uri: Uri): String? {
+        var path: String? = null
+        val projection = arrayOf(android.provider.MediaStore.Images.Media.DATA)
+        contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+            val columnIndex = cursor.getColumnIndexOrThrow(android.provider.MediaStore.Images.Media.DATA)
+            if (cursor.moveToFirst()) {
+                path = cursor.getString(columnIndex)
+            }
+        }
+        return path
     }
 }
