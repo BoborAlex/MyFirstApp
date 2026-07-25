@@ -2,7 +2,7 @@ package com.example.myfirstapp
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.location.Geocoder
+import android.location.Location
 import android.os.Bundle
 import android.widget.Button
 import android.widget.ImageView
@@ -10,17 +10,25 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import com.squareup.picasso.Picasso
-import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.concurrent.TimeUnit
+import kotlin.math.*
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private lateinit var tvLocationResult: TextView
     private lateinit var ivLocationImage: ImageView
-    private val LOCATION_PERMISSION_REQUEST_CODE = 100
+    private val PERMISSION_REQUEST_CODE = 100
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,76 +40,114 @@ class MainActivity : AppCompatActivity() {
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
+        // Запускаем фоновый периодический индексатор галереи
+        startBackgroundIndexer()
+
         btnGetLocation.setOnClickListener {
-            checkLocationPermissionAndGet()
+            checkPermissionsAndRun()
         }
     }
 
-    private fun checkLocationPermissionAndGet() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-            != PackageManager.PERMISSION_GRANTED) {
+    private fun startBackgroundIndexer() {
+        val request = PeriodicWorkRequestBuilder<PhotoIndexerWorker>(4, TimeUnit.HOURS).build()
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "PhotoIndexerWork",
+            ExistingPeriodicWorkPolicy.KEEP,
+            request
+        )
+    }
+
+    private fun checkPermissionsAndRun() {
+        val fineLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+        val readStorage = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES)
+        } else {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+
+        if (fineLocation != PackageManager.PERMISSION_GRANTED || readStorage != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(
                 this,
-                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
-                LOCATION_PERMISSION_REQUEST_CODE
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU)
+                        Manifest.permission.READ_MEDIA_IMAGES
+                    else
+                        Manifest.permission.READ_EXTERNAL_STORAGE
+                ),
+                PERMISSION_REQUEST_CODE
             )
         } else {
-            fetchLocation()
+            fetchLocationAndFindPhotos()
         }
     }
 
-    private fun fetchLocation() {
+    private fun fetchLocationAndFindPhotos() {
         try {
             fusedLocationClient.lastLocation.addOnSuccessListener { location ->
                 if (location != null) {
-                    val geocoder = Geocoder(this, Locale.getDefault())
-                    val addresses = geocoder.getFromLocation(location.latitude, location.longitude, 1)
+                    // Показываем панораму улицы по текущим координатам
+                    loadStreetView(location.latitude, location.longitude)
                     
-                    if (!addresses.isNullOrEmpty()) {
-                        val address = addresses[0]
-                        val addressText = address.getAddressLine(0) ?: "Адрес не найден"
-                        val cityName = address.locality ?: address.countryName ?: "landscape"
-                        
-                        tvLocationResult.text = "Я здесь:\n$addressText"
-                        
-                        // Загружаем картинку места из интернета по названию города/локации
-                        loadPlaceImage(cityName)
-                    } else {
-                        tvLocationResult.text = "Широта: ${location.latitude}\nДолгота: ${location.longitude}"
-                    }
+                    // Ищем фото в радиусе 1 км в локальной базе данных
+                    findNearbyPhoto(location.latitude, location.longitude)
                 } else {
                     tvLocationResult.text = "Не удалось определить местоположение."
                 }
             }
         } catch (e: SecurityException) {
-            tvLocationResult.text = "Ошибка доступа к геолокации"
+            tvLocationResult.text = "Ошибка доступа к геопозиции"
         }
     }
 
-    private fun loadPlaceImage(query: String) {
-        // Используем сервис Lorem Picsum для демонстрации красивых картинок по запросу
-        // (в реальных проектах сюда можно подставить поиск через Unsplash API или Google Images)
-        val imageUrl = "https://picsum.photos/seed/${query.hashCode()}/600/400"
-        
-        Picasso.get()
-            .load(imageUrl)
-            .placeholder(android.R.drawable.ic_menu_gallery) // картинка-заглушка во время загрузки
-            .error(android.R.drawable.ic_dialog_alert) // если не удалось загрузить
-            .into(ivLocationImage)
+    private fun loadStreetView(lat: Double, lon: Double) {
+        val apiKey = "ТВОЙ_API_КЛЮЧ" // Твой ключ от Google Street View
+        val url = "https://maps.googleapis.com/maps/api/streetview?size=600x300&location=$lat,$lon&key=$apiKey"
+        Picasso.get().load(url).into(ivLocationImage)
     }
 
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == LOCATION_PERMISSION_REQUEST_CODE) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                fetchLocation()
-            } else {
-                tvLocationResult.text = "Нужно разрешение на геопозицию!"
+    private fun findNearbyPhoto(currentLat: Double, currentLon: Double) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val dao = AppDatabase.getDatabase(applicationContext).photoDao()
+
+            // Грубый расчет рамочного квадрата для 1 км (1 градус ~ 111 км, значит 1 км ~ 0.01 градуса)
+            val delta = 0.015
+            val photos = dao.getPhotosInBox(
+                currentLat - delta, currentLat + delta,
+                currentLon - delta, currentLon + delta
+            )
+
+            // Точный поиск ближайшего фото в радиусе 1000 метров
+            var closestPhoto: PhotoEntity? = null
+            var minDistance = Float.MAX_VALUE
+
+            for (photo in photos) {
+                val results = FloatArray(1)
+                Location.distanceBetween(currentLat, currentLon, photo.latitude, photo.longitude, results)
+                val distanceInMeters = results[0]
+
+                if (distanceInMeters <= 1000f && distanceInMeters < minDistance) {
+                    minDistance = distanceInMeters
+                    closestPhoto = photo
+                }
             }
+
+            withContext(Dispatchers.Main) {
+                if (closestPhoto != null) {
+                    tvLocationResult.text = "Найдено фото поблизости!\nРасстояние: ${minDistance.toInt()} м\nФайл: ${closestPhoto.filePath}"
+                } else {
+                    tvLocationResult.text = "В радиусе 1 км ваших фото с геотегом не найдено."
+                }
+            }
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == PERMISSION_REQUEST_CODE && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+            fetchLocationAndFindPhotos()
+        } else {
+            tvLocationResult.text = "Требуются все разрешения для работы локального радара!"
         }
     }
 }
