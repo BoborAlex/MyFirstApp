@@ -12,50 +12,59 @@ class PhotoIndexerWorker(context: Context, params: WorkerParameters) : Coroutine
     override suspend fun doWork(): Result {
         val database = AppDatabase.getDatabase(applicationContext)
         val dao = database.photoDao()
-        val lastDate = dao.getLastIndexedDate() ?: 0L
 
         val newPhotos = mutableListOf<PhotoEntity>()
+        
+        // Забираем вообще все картинки из галереи без ограничений по дате
         val projection = arrayOf(
             MediaStore.Images.Media.DATA,
             MediaStore.Images.Media.DATE_ADDED
         )
-        val selection = "${MediaStore.Images.Media.DATE_ADDED} > ?"
-        val selectionArgs = arrayOf((lastDate / 1000).toString())
 
         applicationContext.contentResolver.query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             projection,
-            selection,
-            selectionArgs,
-            "${MediaStore.Images.Media.DATE_ADDED} ASC"
+            null,
+            null,
+            "${MediaStore.Images.Media.DATE_ADDED} DESC"
         )?.use { cursor ->
             val pathColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA)
             val dateColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
 
             while (cursor.moveToNext()) {
-                val filePath = cursor.getString(pathColumn)
+                val filePath = cursor.getString(pathColumn) ?: continue
                 val dateAdded = cursor.getLong(dateColumn) * 1000
 
-                // Достаем EXIF координаты
+                // Читаем EXIF-данные напрямую из файла фотографии на диске
                 try {
-                    val exif = ExifInterface(filePath)
-                    val latLong = FloatArray(2)
-                    if (exif.getLatLong(latLong)) {
-                        newPhotos.add(
-                            PhotoEntity(
-                                filePath = filePath,
-                                latitude = latLong[0].toDouble(),
-                                longitude = latLong[1].toDouble(),
-                                dateAdded = dateAdded
-                            )
-                        )
+                    val file = File(filePath)
+                    if (file.exists()) {
+                        val exif = ExifInterface(file.absolutePath)
+                        val latLong = FloatArray(2)
+                        
+                        if (exif.getLatLong(latLong)) {
+                            val latitude = latLong[0].toDouble()
+                            val longitude = latLong[1].toDouble()
+
+                            if (latitude != 0.0 || longitude != 0.0) {
+                                newPhotos.add(
+                                    PhotoEntity(
+                                                filePath = filePath,
+                                        latitude = latitude,
+                                        longitude = longitude,
+                                        dateAdded = dateAdded
+                                    )
+                                )
+                            }
+                        }
                     }
                 } catch (e: Exception) {
-                    // Файл поврежден или недоступен
+                    // Пропускаем поврежденные файлы
                 }
             }
         }
 
+        // Сохраняем найденное в базу
         if (newPhotos.isNotEmpty()) {
             dao.insertAll(newPhotos)
         }
