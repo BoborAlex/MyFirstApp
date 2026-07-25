@@ -3,6 +3,7 @@ package com.example.myfirstapp
 import android.Manifest
 import android.content.pm.PackageManager
 import android.location.Location
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Button
 import android.widget.ImageView
@@ -20,8 +21,8 @@ import com.squareup.picasso.Picasso
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.concurrent.TimeUnit
-import kotlin.math.*
 
 class MainActivity : AppCompatActivity() {
 
@@ -40,7 +41,6 @@ class MainActivity : AppCompatActivity() {
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
-        // Запускаем фоновый периодический индексатор галереи
         startBackgroundIndexer()
 
         btnGetLocation.setOnClickListener {
@@ -86,11 +86,8 @@ class MainActivity : AppCompatActivity() {
         try {
             fusedLocationClient.lastLocation.addOnSuccessListener { location ->
                 if (location != null) {
-                    // Показываем панораму улицы по текущим координатам
-                    loadStreetView(location.latitude, location.longitude)
-                    
-                    // Ищем фото в радиусе 1 км в локальной базе данных
-                    findNearbyPhoto(location.latitude, location.longitude)
+                    // Ищем фото в радиусе 10 км с сортировкой по близости
+                    findClosestPhotoInRange(location.latitude, location.longitude, 10.0)
                 } else {
                     tvLocationResult.text = "Не удалось определить местоположение."
                 }
@@ -100,43 +97,53 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadStreetView(lat: Double, lon: Double) {
-        val apiKey = "ТВОЙ_API_КЛЮЧ" // Твой ключ от Google Street View
-        val url = "https://maps.googleapis.com/maps/api/streetview?size=600x300&location=$lat,$lon&key=$apiKey"
-        Picasso.get().load(url).into(ivLocationImage)
-    }
-
-    private fun findNearbyPhoto(currentLat: Double, currentLon: Double) {
+    private fun findClosestPhotoInRange(currentLat: Double, currentLon: Double, radiusKm: Double) {
         lifecycleScope.launch(Dispatchers.IO) {
             val dao = AppDatabase.getDatabase(applicationContext).photoDao()
 
-            // Грубый расчет рамочного квадрата для 1 км (1 градус ~ 111 км, значит 1 км ~ 0.01 градуса)
-            val delta = 0.015
+            // 1 градус ~ 111 км. Считаем дельту для радиуса (например, 10 км ~ 0.1 градуса)
+            val delta = radiusKm / 111.0
             val photos = dao.getPhotosInBox(
                 currentLat - delta, currentLat + delta,
                 currentLon - delta, currentLon + delta
             )
 
-            // Точный поиск ближайшего фото в радиусе 1000 метров
-            var closestPhoto: PhotoEntity? = null
-            var minDistance = Float.MAX_VALUE
-
-            for (photo in photos) {
+            // Считаем расстояние для каждой найденной фотографии
+            val photosWithDistance = photos.mapNotNull { photo ->
                 val results = FloatArray(1)
                 Location.distanceBetween(currentLat, currentLon, photo.latitude, photo.longitude, results)
-                val distanceInMeters = results[0]
+                val distanceMeters = results[0]
 
-                if (distanceInMeters <= 1000f && distanceInMeters < minDistance) {
-                    minDistance = distanceInMeters
-                    closestPhoto = photo
+                if (distanceMeters <= radiusKm * 1000.0) {
+                    Pair(photo, distanceMeters)
+                } else {
+                    null
                 }
-            }
+            }.sortedBy { it.second } // Сортируем по возрастанию расстояния (от самых близких к дальним)
 
             withContext(Dispatchers.Main) {
-                if (closestPhoto != null) {
-                    tvLocationResult.text = "Найдено фото поблизости!\nРасстояние: ${minDistance.toInt()} м\nФайл: ${closestPhoto.filePath}"
+                if (photosWithDistance.isNotEmpty()) {
+                    val (closestPhoto, distanceMeters) = photosWithDistance.first()
+                    
+                    val distanceText = if (distanceMeters < 1000) {
+                        "${distanceMeters.toInt()} м"
+                    } else {
+                        String.format("%.1f км", distanceMeters / 1000.0)
+                    }
+
+                    tvLocationResult.text = "Ближайшее фото найдено!\nРасстояние: $distanceText"
+
+                    // Выводим саму найденную фотографию из памяти телефона в ImageView
+                    val imageFile = File(closestPhoto.filePath)
+                    if (imageFile.exists()) {
+                        Picasso.get()
+                            .load(imageFile)
+                            .placeholder(android.R.drawable.ic_menu_gallery)
+                            .error(android.R.drawable.ic_dialog_alert)
+                            .into(ivLocationImage)
+                    }
                 } else {
-                    tvLocationResult.text = "В радиусе 1 км ваших фото с геотегом не найдено."
+                    tvLocationResult.text = "В радиусе ${radiusKm.toInt()} км нет фото с геотегами.\n(Убедитесь, что на камере включено сохранение геопозиции)"
                 }
             }
         }
