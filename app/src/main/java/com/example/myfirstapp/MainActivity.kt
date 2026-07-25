@@ -2,6 +2,7 @@ package com.example.myfirstapp
 
 import android.location.Address
 import android.location.Geocoder
+import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
 import android.widget.Button
@@ -25,7 +26,7 @@ class MainActivity : AppCompatActivity() {
                 var latitude = 0.0
                 var longitude = 0.0
 
-                // Запрашиваем координаты напрямую из системной базы MediaStore по Uri выбранного фото
+                // Запрашиваем координаты из системной базы MediaStore для выбранного файла
                 val projection = arrayOf(
                     MediaStore.Images.Media.LATITUDE,
                     MediaStore.Images.Media.LONGITUDE
@@ -41,6 +42,25 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
+                // Если в MediaStore пусто, пробуем вытащить через альтернативные колонки или датасет
+                if (latitude == 0.0 && longitude == 0.0) {
+                    // Запасной вариант: запрашиваем вообще все метаданные по этому Uri
+                    val metadataProjection = arrayOf("_data", "latitude", "longitude")
+                    contentResolver.query(uri, metadataProjection, null, null, null)?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            for (i in 0 until cursor.columnCount) {
+                                val colName = cursor.getColumnName(i)
+                                if (colName.contains("lat", true)) {
+                                    latitude = cursor.getDouble(i)
+                                }
+                                if (colName.contains("lon", true)) {
+                                    longitude = cursor.getDouble(i)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if (latitude != 0.0 || longitude != 0.0) {
                     val geocoder = Geocoder(this, Locale.getDefault())
                     @Suppress("DEPRECATION")
@@ -49,12 +69,14 @@ class MainActivity : AppCompatActivity() {
                     if (!addresses.isNullOrEmpty()) {
                         val address: Address = addresses[0]
                         val fullAddress = address.getAddressLine(0) ?: "Адрес не определен"
-                        tvLocationResult.text = "УСПЕХ из MediaStore!\nКоординаты: $latitude, $longitude\nАдрес: $fullAddress"
+                        tvLocationResult.text = "УСПЕХ!\nКоординаты: $latitude, $longitude\nАдрес: $fullAddress"
                     } else {
-                        tvLocationResult.text = "Координаты из MediaStore: $latitude, $longitude, но адрес не определился."
+                        tvLocationResult.text = "Координаты найдены: $latitude, $longitude, но адрес не определился."
                     }
                 } else {
-                    tvLocationResult.text = "В системной базе MediaStore для этого фото нет координат (нуки)."
+                    // Если система совсем скрыла координаты файла из соображений безопасности, 
+                    // выведем понятный статус
+                    tvLocationResult.text = "Система скрыла геоданные этого файла в MediaStore.\nНо мы можем привязать его вручную!"
                 }
 
             } catch (e: Exception) {
