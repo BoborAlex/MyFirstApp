@@ -1,6 +1,5 @@
 package com.example.myfirstapp
 
-import android.location.Address
 import android.location.Geocoder
 import android.os.Bundle
 import android.widget.Button
@@ -20,10 +19,13 @@ class MainActivity : AppCompatActivity() {
 
     private val pickPhotoLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
-            Picasso.get().load(uri).into(ivLocationImage)
+            try {
+                Picasso.get().load(uri).into(ivLocationImage)
+            } catch (e: Exception) {
+                // Игнорируем ошибки пикассо, если они есть
+            }
 
             try {
-                // Копируем выбранное фото во временный кэш-файл приложения
                 val tempFile = File(cacheDir, "temp_photo.jpg")
                 contentResolver.openInputStream(uri)?.use { input ->
                     tempFile.outputStream().use { output ->
@@ -31,34 +33,37 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                // Безопасно читаем EXIF из временного файла
                 val exif = ExifInterface(tempFile.absolutePath)
                 val latLong = FloatArray(2)
-                val hasLatLng = exif.getLatLong(latLong)
+                val hasLatLng = try { exif.getLatLong(latLong) } catch (e: Exception) { false }
 
                 if (hasLatLng && (latLong[0] != 0.0f || latLong[1] != 0.0f)) {
                     val latitude = latLong[0].toDouble()
                     val longitude = latLong[1].toDouble()
 
-                    val geocoder = Geocoder(this, Locale.getDefault())
-                    @Suppress("DEPRECATION")
-                    val addresses = geocoder.getFromLocation(latitude, longitude, 1)
-
-                    if (!addresses.isNullOrEmpty()) {
-                        val address: Address = addresses[0]
-                        val fullAddress = address.getAddressLine(0) ?: "Адрес не определен"
-                        tvLocationResult.text = "УСПЕХ!\nКоординаты: $latitude, $longitude\nАдрес: $fullAddress"
-                    } else {
-                        tvLocationResult.text = "Координаты найдены: $latitude, $longitude, но адрес не определился."
+                    var fullAddress = "Адрес не определен"
+                    try {
+                        val geocoder = Geocoder(this, Locale.getDefault())
+                        @Suppress("DEPRECATION")
+                        val addresses = geocoder.getFromLocation(latitude, longitude, 1)
+                        if (!addresses.isNullOrEmpty()) {
+                            fullAddress = addresses[0].getAddressLine(0) ?: "Адрес не определен"
+                        }
+                    } catch (e: Exception) {
+                        fullAddress = "Ошибка геокодера: ${e.localizedMessage}"
                     }
+
+                    tvLocationResult.text = "УСПЕХ!\nКоординаты: $latitude, $longitude\nАдрес: $fullAddress"
                 } else {
                     tvLocationResult.text = "В этом файле EXIF-координаты отсутствуют или занулены системой."
                 }
 
-                tempFile.delete()
+                if (tempFile.exists()) {
+                    tempFile.delete()
+                }
 
             } catch (e: Exception) {
-                tvLocationResult.text = "Ошибка: ${e.localizedMessage}"
+                tvLocationResult.text = "Ошибка обработки: ${e.localizedMessage}"
             }
         }
     }
@@ -67,12 +72,20 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        tvLocationResult = findViewById(R.id.tvLocationResult)
-        ivLocationImage = findViewById(R.id.ivLocationImage)
-        val btnTestPhoto = findViewById<Button>(R.id.btnTestPhoto)
+        try {
+            tvLocationResult = findViewById(R.id.tvLocationResult)
+            ivLocationImage = findViewById(R.id.ivLocationImage)
+            val btnTestPhoto = findViewById<Button>(R.id.btnTestPhoto)
 
-        btnTestPhoto.setOnClickListener {
-            pickPhotoLauncher.launch("image/*")
+            btnTestPhoto.setOnClickListener {
+                try {
+                    pickPhotoLauncher.launch("image/*")
+                } catch (e: Exception) {
+                    tvLocationResult.text = "Ошибка запуска галереи: ${e.localizedMessage}"
+                }
+            }
+        } catch (e: Exception) {
+            // Защита от падений в onCreate
         }
     }
 }
