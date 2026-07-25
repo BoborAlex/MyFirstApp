@@ -2,7 +2,7 @@ package com.example.myfirstapp
 
 import android.location.Address
 import android.location.Geocoder
-import android.media.MediaMetadataRetriever
+import android.media.ExifInterface
 import android.os.Bundle
 import android.widget.Button
 import android.widget.ImageView
@@ -10,6 +10,7 @@ import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.squareup.picasso.Picasso
+import java.io.File
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
@@ -22,61 +23,45 @@ class MainActivity : AppCompatActivity() {
             Picasso.get().load(uri).into(ivLocationImage)
 
             try {
-                // Используем MediaMetadataRetriever, он надежнее читает GPS из MediaStore
-                val retriever = MediaMetadataRetriever()
+                val tempFile = File(cacheDir, "temp_photo.jpg")
+                contentResolver.openInputStream(uri)?.use { input ->
+                    tempFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                val exif = ExifInterface(tempFile.absolutePath)
                 
-                // В новых версиях Android для чтения из URI лучше использовать этот метод
-                retriever.setDataSource(this, uri)
+                // Безопасно извлекаем координаты через встроенный метод конвертации ExifInterface
+                val latLong = FloatArray(2)
+                val hasValues = exif.getLatLong(latLong)
 
-                // Получаем GPS-строку из метаданных (формат: "+59.0123+030.0123/")
-                val gpsData = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_LOCATION)
+                if (hasValues && (latLong[0] != 0.0f || latLong[1] != 0.0f)) {
+                    val latitude = latLong[0].toDouble()
+                    val longitude = latLong[1].toDouble()
 
-                if (gpsData != null) {
-                    // Парсим строку, чтобы получить широту и долготу
-                    // Регулярное выражение ищет числа, включая знак "+" или "-"
-                    val regex = "([+-]?\\d+\\.\\d+)".toRegex()
-                    val matches = regex.findAll(gpsData)
-                    val coordinates = matches.map { it.value.toDouble() }.toList()
+                    val geocoder = Geocoder(this, Locale.getDefault())
+                    @Suppress("DEPRECATION")
+                    val addresses = geocoder.getFromLocation(latitude, longitude, 1)
 
-                    if (coordinates.size >= 2) {
-                        val latitude = coordinates[0]
-                        val longitude = coordinates[1]
-
-                        // Превращаем координаты в адрес через Geocoder
-                        val geocoder = Geocoder(this, Locale.getDefault())
-                        // В старых версиях Android метод устарел, но на новых работает норм
-                        @Suppress("DEPRECATION") 
-                        val addresses = geocoder.getFromLocation(latitude, longitude, 1)
-
-                        if (!addresses.isNullOrEmpty()) {
-                            val address: Address = addresses[0]
-                            val fullAddress = addresses[0].getAddressLine(0) ?: "Адрес не определен"
-                            val city = address.locality ?: address.adminArea ?: ""
-                            val street = address.thoroughfare ?: ""
-                            val house = address.subThoroughfare ?: ""
-                            
-                            // Формируем аккуратный адрес для отображения
-                            val prettyAddress = listOf(city, street, house).filter { it.isNotBlank() }.joinToString(", ")
-                            
-                            tvLocationResult.text = """
-                                УСПЕХ!
-                                Координаты: $latitude, $longitude
-                                Город/Улица: $prettyAddress
-                                Полный адрес: $fullAddress
-                            """.trimIndent()
-                        } else {
-                            tvLocationResult.text = "Координаты найдены: $latitude, $longitude, но адрес не определился."
-                        }
+                    if (!addresses.isNullOrEmpty()) {
+                        val address: Address = addresses[0]
+                        val fullAddress = address.getAddressLine(0) ?: "Адрес не определен"
+                        tvLocationResult.text = "УСПЕХ!\nКоординаты: $latitude, $longitude\nАдрес: $fullAddress"
                     } else {
-                        tvLocationResult.text = "GPS данные найдены, но формат не распознан: $gpsData"
+                        tvLocationResult.text = "Координаты найдены: $latitude, $longitude, но адрес не определился."
                     }
                 } else {
-                    tvLocationResult.text = "В метаданных файла не найдена информация о локации (METADATA_KEY_LOCATION is null)."
+                    // Запасной вариант: читаем сырые теги, если getLatLong вернул нули
+                    val latStr = exif.getAttribute(ExifInterface.TAG_GPS_LATITUDE)
+                    val lonStr = exif.getAttribute(ExifInterface.TAG_GPS_LONGITUDE)
+                    tvLocationResult.text = "GPS теги в файле пусты или равны нулю.\nСырые теги: Lat=$latStr, Lon=$lonStr"
                 }
-                retriever.release()
+
+                tempFile.delete()
 
             } catch (e: Exception) {
-                tvLocationResult.text = "Ошибка чтения метаданных: ${e.localizedMessage}"
+                tvLocationResult.text = "Ошибка: ${e.localizedMessage}"
             }
         }
     }
